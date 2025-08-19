@@ -1,0 +1,34 @@
+/* Arquivo CSS personalizado para o Conversor VCF */
+
+.upload-area {
+    transition: all 0.3s ease;
+}
+
+.upload-area:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+.download-btn {
+    transition: all 0.3s ease;
+}
+
+.download-btn:hover {
+    transform: translateY(-3px);
+}
+
+.card {
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 768px) {
+    .download-btn {
+        width: 100%;
+        margin: 5px 0;
+    }
+}
