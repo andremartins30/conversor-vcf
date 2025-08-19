@@ -1,0 +1,16 @@
+name: conversor-vcf
+services:
+  - name: web
+    source_dir: /
+    github:
+      repo: andremartins30/conversor-vcf
+      branch: main
+    run_command: gunicorn app:app
+    environment_slug: python
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        value: sua-chave-super-secreta-aqui

@@ -100,7 +100,7 @@
                                 <div class="col-md-6">
                                     <h4 class="text-primary mb-2">
                                         <i class="fas fa-users me-2"></i>
-                                        {{ total_contatos }}
+                                        {{ num_contatos }}
                                     </h4>
                                     <p class="text-muted mb-0">Contatos Processados</p>
                                 </div>
@@ -118,15 +118,10 @@
                         <div class="mb-4">
                             <h4 class="mb-3">Baixar Arquivos:</h4>
                             <div class="d-flex flex-wrap justify-content-center">
-                                <a href="{{ url_for('download_file', filename=csv_file) }}"
+                                <a href="{{ url_for('download_file', filename=download_file) }}"
                                     class="btn btn-csv download-btn">
-                                    <i class="fas fa-file-csv fa-lg me-2"></i>
-                                    Baixar CSV
-                                </a>
-                                <a href="{{ url_for('download_file', filename=xlsx_file) }}"
-                                    class="btn btn-excel download-btn">
-                                    <i class="fas fa-file-excel fa-lg me-2"></i>
-                                    Baixar Excel
+                                    <i class="fas fa-download fa-lg me-2"></i>
+                                    Baixar Arquivos (ZIP)
                                 </a>
                             </div>
                         </div>
