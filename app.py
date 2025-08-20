@@ -38,30 +38,68 @@ def gerar_vcf_contatos(contatos):
     vcf_content = []
     
     for contato in contatos:
+        codigo = contato.get('Codigo', '').strip()
         nome = contato.get('Nome', '').strip()
         telefone = contato.get('Telefone', '').strip()
         
         if not nome and not telefone:
             continue
+        
+        # Monta o nome completo incluindo o código se disponível
+        nome_completo = nome
+        if codigo and codigo not in ['', 'nan']:
+            nome_completo = f"{codigo} - {nome}" if nome else codigo
             
         vcf_content.append("BEGIN:VCARD")
         vcf_content.append("VERSION:3.0")
         
-        if nome:
-            # Nome formatado
-            vcf_content.append(f"FN:{nome}")
-            # Nome estruturado (sobrenome;nome)
-            partes_nome = nome.split(' ', 1)
-            if len(partes_nome) > 1:
-                vcf_content.append(f"N:{partes_nome[-1]};{partes_nome[0]};;;")
+        if nome_completo:
+            # Nome formatado (obrigatório)
+            vcf_content.append(f"FN:{nome_completo}")
+            
+            # Nome estruturado (sobrenome;nome;;;) - mais compatível com WhatsApp
+            # Separa código do nome para melhor estruturação
+            if ' - ' in nome_completo:
+                partes = nome_completo.split(' - ', 1)
+                codigo_parte = partes[0]
+                nome_parte = partes[1] if len(partes) > 1 else ''
+                
+                if nome_parte:
+                    partes_nome = nome_parte.split(' ', 1)
+                    if len(partes_nome) > 1:
+                        vcf_content.append(f"N:{partes_nome[-1]};{partes_nome[0]};{codigo_parte};;")
+                    else:
+                        vcf_content.append(f"N:{nome_parte};{codigo_parte};;;")
+                else:
+                    vcf_content.append(f"N:{codigo_parte};;;;")
             else:
-                vcf_content.append(f"N:{nome};;;;")
+                partes_nome = nome_completo.split(' ', 1)
+                if len(partes_nome) > 1:
+                    vcf_content.append(f"N:{partes_nome[-1]};{partes_nome[0]};;;")
+                else:
+                    vcf_content.append(f"N:{nome_completo};;;;")
         
         if telefone:
             # Remove caracteres especiais do telefone, mas mantém + no início
             telefone_limpo = re.sub(r'[^\d\+]', '', telefone)
             if telefone_limpo:
+                # Adiciona +55 se não tiver DDI (para WhatsApp Brasil)
+                if not telefone_limpo.startswith('+'):
+                    if len(telefone_limpo) == 11:  # DDD + 9 dígitos
+                        telefone_limpo = f"+55{telefone_limpo}"
+                    elif len(telefone_limpo) == 10:  # DDD + 8 dígitos
+                        telefone_limpo = f"+55{telefone_limpo}"
+                
+                # Formato compatível com WhatsApp
                 vcf_content.append(f"TEL;TYPE=CELL:{telefone_limpo}")
+        
+        # Adiciona organização se tiver código
+        if codigo and codigo not in ['', 'nan']:
+            vcf_content.append(f"ORG:Vendedor {codigo}")
+        
+        # Adiciona nota com informações extras
+        if codigo and codigo not in ['', 'nan']:
+            vcf_content.append(f"NOTE:Código Vendedor: {codigo}")
         
         vcf_content.append("END:VCARD")
         vcf_content.append("")  # Linha em branco entre contatos
@@ -94,34 +132,48 @@ def ler_planilha_contatos(arquivo_path):
         print(f"Primeiras linhas:\n{df.head()}")
         
         # Detecta colunas automaticamente
+        codigo_col = None
         nome_col = None
         telefone_col = None
+        
+        # Procura por colunas de código
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(palavra in col_lower for palavra in ['cod', 'código', 'codigo', 'code']):
+                codigo_col = col
+                break
         
         # Procura por colunas de nome
         for col in df.columns:
             col_lower = str(col).lower()
-            if any(palavra in col_lower for palavra in ['nome', 'name', 'contato', 'pessoa']):
+            if any(palavra in col_lower for palavra in ['nome', 'name', 'contato', 'pessoa', 'cliente']):
                 nome_col = col
                 break
         
         # Procura por colunas de telefone
         for col in df.columns:
             col_lower = str(col).lower()
-            if any(palavra in col_lower for palavra in ['telefone', 'phone', 'fone', 'celular', 'tel', 'mobile']):
+            if any(palavra in col_lower for palavra in ['telefone', 'phone', 'fone', 'celular', 'tel', 'mobile', 'numero']):
                 telefone_col = col
                 break
         
-        # Se não encontrou, usa as duas primeiras colunas
-        if not nome_col and len(df.columns) > 0:
-            nome_col = df.columns[0]
-        if not telefone_col and len(df.columns) > 1:
-            telefone_col = df.columns[1]
+        # Se não encontrou, usa as colunas por posição
+        if not codigo_col and len(df.columns) > 0:
+            codigo_col = df.columns[0]
+        if not nome_col and len(df.columns) > 1:
+            nome_col = df.columns[1]
+        if not telefone_col and len(df.columns) > 2:
+            telefone_col = df.columns[2]
+        elif not telefone_col and len(df.columns) > 1:
+            telefone_col = df.columns[-1]  # Última coluna se só tiver 2 colunas
         
+        print(f"Usando coluna código: {codigo_col}")
         print(f"Usando coluna nome: {nome_col}")
         print(f"Usando coluna telefone: {telefone_col}")
         
         # Extrai contatos
         for index, row in df.iterrows():
+            codigo = str(row[codigo_col]).strip() if codigo_col and pd.notna(row[codigo_col]) else ''
             nome = str(row[nome_col]).strip() if nome_col and pd.notna(row[nome_col]) else ''
             telefone = str(row[telefone_col]).strip() if telefone_col and pd.notna(row[telefone_col]) else ''
             
@@ -132,10 +184,13 @@ def ler_planilha_contatos(arquivo_path):
                 nome = ''
             if telefone.lower() == 'nan':
                 telefone = ''
+            if codigo.lower() == 'nan':
+                codigo = ''
                 
             contatos.append({
-                'Nome': nome,
-                'Telefone': telefone
+                'Codigo': codigo,
+                'Nome': formatar_nome(nome),
+                'Telefone': formatar_telefone(telefone)
             })
         
         return contatos
@@ -143,6 +198,45 @@ def ler_planilha_contatos(arquivo_path):
     except Exception as e:
         print(f"Erro ao ler planilha: {e}")
         raise Exception(f"Erro ao processar planilha: {str(e)}")
+
+def formatar_nome(nome):
+    """Formata o nome para caixa alta"""
+    if not nome or nome.strip() == '':
+        return ''
+    return nome.strip().upper()
+
+def formatar_telefone(telefone):
+    """Formata o telefone no formato brasileiro (DDD)1234-1234, removendo DDI +55"""
+    if not telefone or telefone.strip() == '':
+        return ''
+    
+    # Remove todos os caracteres não numéricos, exceto o +
+    telefone_limpo = re.sub(r'[^\d\+]', '', telefone.strip())
+    
+    # Remove DDI +55 se presente
+    if telefone_limpo.startswith('+55'):
+        telefone_limpo = telefone_limpo[3:]
+    elif telefone_limpo.startswith('55') and len(telefone_limpo) >= 13:
+        # Remove 55 do início se o número tem 13 dígitos ou mais (55 + DDD + 9 dígitos)
+        telefone_limpo = telefone_limpo[2:]
+    
+    # Remove zeros à esquerda
+    telefone_limpo = telefone_limpo.lstrip('0')
+    
+    # Verifica se tem pelo menos 10 dígitos (DDD + 8 dígitos) ou 11 (DDD + 9 dígitos)
+    if len(telefone_limpo) == 10:
+        # Formato: DDD + 8 dígitos
+        ddd = telefone_limpo[:2]
+        numero = telefone_limpo[2:6] + '-' + telefone_limpo[6:]
+        return f"({ddd}){numero}"
+    elif len(telefone_limpo) == 11:
+        # Formato: DDD + 9 dígitos
+        ddd = telefone_limpo[:2]
+        numero = telefone_limpo[2:7] + '-' + telefone_limpo[7:]
+        return f"({ddd}){numero}"
+    else:
+        # Se não conseguir formatar, retorna o número limpo
+        return telefone_limpo
 
 def extrair_contatos_manual(arquivo_vcf):
     """Extrai contatos usando regex"""
@@ -166,6 +260,24 @@ def extrair_contatos_manual(arquivo_vcf):
         nome_match = re.search(r'FN:(.+)', vcard_text)
         nome = nome_match.group(1).strip() if nome_match else ''
         
+        # Extrai código da organização ou nota
+        codigo = ''
+        org_match = re.search(r'ORG:.*Vendedor\s+([^\s\n]+)', vcard_text)
+        if org_match:
+            codigo = org_match.group(1).strip()
+        else:
+            # Tenta extrair da nota
+            note_match = re.search(r'NOTE:.*Código Vendedor:\s*([^\s\n]+)', vcard_text)
+            if note_match:
+                codigo = note_match.group(1).strip()
+            else:
+                # Tenta extrair do próprio nome se tiver formato "COD - NOME"
+                if ' - ' in nome:
+                    partes = nome.split(' - ', 1)
+                    if len(partes) == 2:
+                        codigo = partes[0].strip()
+                        nome = partes[1].strip()
+        
         # Extrai telefones
         telefones = re.findall(r'TEL[^:]*:([+\d\-\s\(\)]+)', vcard_text)
         telefones_limpos = []
@@ -187,12 +299,14 @@ def extrair_contatos_manual(arquivo_vcf):
             if telefones_unicos:
                 for telefone in telefones_unicos:
                     contatos.append({
-                        'Nome': nome,
-                        'Telefone': telefone
+                        'Codigo': codigo,
+                        'Nome': formatar_nome(nome),
+                        'Telefone': formatar_telefone(telefone)
                     })
             else:
                 contatos.append({
-                    'Nome': nome,
+                    'Codigo': codigo,
+                    'Nome': formatar_nome(nome),
                     'Telefone': ''
                 })
     
@@ -248,6 +362,11 @@ def upload_file():
                 
                 # Gera CSV e Excel separadamente
                 df = pd.DataFrame(contatos)
+                # Renomeia as colunas conforme especificado
+                if 'Codigo' in df.columns:
+                    df.columns = ['COD', 'NOMES CLIENTES', 'NUMEROS TELEFONE']
+                else:
+                    df.columns = ['NOMES CLIENTES', 'NUMEROS TELEFONE']
                 base_name = filename.rsplit('.', 1)[0]
                 
                 # Salva CSV

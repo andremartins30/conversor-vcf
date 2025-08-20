@@ -1,5 +1,10 @@
 /* Arquivo CSS personalizado para o Conversor VCF */
 
+body {
+    background: linear-gradient(135deg, #37478d 0%, #37478d 50%, #fd2e04 100%);
+    min-height: 100vh;
+}
+
 .upload-area {
     transition: all 0.3s ease;
 }
