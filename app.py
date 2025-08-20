@@ -187,11 +187,11 @@ def ler_planilha_contatos(arquivo_path):
             if codigo.lower() == 'nan':
                 codigo = ''
                 
-            contatos.append({
-                'Codigo': codigo,
-                'Nome': formatar_nome(nome),
-                'Telefone': formatar_telefone(telefone)
-            })
+                contatos.append({
+                    'Codigo': codigo,
+                    'Nome': higienizar_nome(nome),  # Usa higienizar_nome em vez de formatar_nome
+                    'Telefone': formatar_telefone(telefone)
+                })
         
         return contatos
         
@@ -204,6 +204,20 @@ def formatar_nome(nome):
     if not nome or nome.strip() == '':
         return ''
     return nome.strip().upper()
+
+def higienizar_nome(nome):
+    """Remove números e caracteres especiais do nome, mantendo apenas letras e espaços"""
+    if not nome or nome.strip() == '':
+        return ''
+    
+    # Remove números e caracteres especiais, mantém apenas letras e espaços
+    import re
+    nome_limpo = re.sub(r'[^A-Za-zÀ-ÿ\s]', '', nome.strip())
+    
+    # Remove espaços extras
+    nome_limpo = ' '.join(nome_limpo.split())
+    
+    return nome_limpo.upper() if nome_limpo else ''
 
 def formatar_telefone(telefone):
     """Formata o telefone no formato brasileiro (DDD)1234-1234, removendo DDI +55"""
@@ -237,6 +251,30 @@ def formatar_telefone(telefone):
     else:
         # Se não conseguir formatar, retorna o número limpo
         return telefone_limpo
+
+def higienizar_planilha_vcf(contatos):
+    """Higieniza dados extraídos de VCF para planilha"""
+    contatos_limpos = []
+    
+    for contato in contatos:
+        codigo = contato.get('Codigo', '').strip()
+        nome = contato.get('Nome', '').strip()
+        telefone = contato.get('Telefone', '').strip()
+        
+        # Higieniza o nome removendo números
+        nome_limpo = higienizar_nome(nome)
+        
+        # Se o nome ficou vazio após limpeza, pula o contato
+        if not nome_limpo:
+            continue
+        
+        contatos_limpos.append({
+            'Codigo': '',  # Sempre vazio conforme solicitado
+            'Nome': nome_limpo,
+            'Telefone': telefone
+        })
+    
+    return contatos_limpos
 
 def extrair_contatos_manual(arquivo_vcf):
     """Extrai contatos usando regex"""
@@ -300,13 +338,13 @@ def extrair_contatos_manual(arquivo_vcf):
                 for telefone in telefones_unicos:
                     contatos.append({
                         'Codigo': codigo,
-                        'Nome': formatar_nome(nome),
+                        'Nome': higienizar_nome(nome),  # Usa higienizar_nome
                         'Telefone': formatar_telefone(telefone)
                     })
             else:
                 contatos.append({
                     'Codigo': codigo,
-                    'Nome': formatar_nome(nome),
+                    'Nome': higienizar_nome(nome),  # Usa higienizar_nome
                     'Telefone': ''
                 })
     
@@ -360,13 +398,18 @@ def upload_file():
                     flash('Nenhum contato foi encontrado no arquivo VCF')
                     return redirect(url_for('upload_file'))
                 
+                # Higieniza os contatos extraídos do VCF
+                contatos_higienizados = higienizar_planilha_vcf(contatos)
+                print(f"Contatos após higienização: {len(contatos_higienizados)}")
+                
+                if not contatos_higienizados:
+                    flash('Nenhum contato válido foi encontrado após a higienização')
+                    return redirect(url_for('upload_file'))
+                
                 # Gera CSV e Excel separadamente
-                df = pd.DataFrame(contatos)
+                df = pd.DataFrame(contatos_higienizados)
                 # Renomeia as colunas conforme especificado
-                if 'Codigo' in df.columns:
-                    df.columns = ['COD', 'NOMES CLIENTES', 'NUMEROS TELEFONE']
-                else:
-                    df.columns = ['NOMES CLIENTES', 'NUMEROS TELEFONE']
+                df.columns = ['COD', 'NOMES CLIENTES', 'NUMEROS TELEFONE']
                 base_name = filename.rsplit('.', 1)[0]
                 
                 # Salva CSV
