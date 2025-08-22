@@ -111,68 +111,102 @@ def ler_planilha_contatos(arquivo_path):
     contatos = []
     
     try:
+        print(f"=== INICIANDO LEITURA DA PLANILHA ===")
+        print(f"Arquivo: {arquivo_path}")
+        
         # Detecta extensão
         ext = arquivo_path.rsplit('.', 1)[1].lower()
+        print(f"Extensão detectada: {ext}")
         
         if ext == 'csv':
             # Tenta diferentes encodings para CSV
             for encoding in ['utf-8', 'latin-1', 'cp1252']:
                 try:
                     df = pd.read_csv(arquivo_path, encoding=encoding)
+                    print(f"CSV lido com encoding: {encoding}")
                     break
                 except UnicodeDecodeError:
+                    print(f"Falha com encoding: {encoding}")
                     continue
             else:
                 raise Exception("Não foi possível detectar a codificação do arquivo CSV")
         else:
             # Excel
+            print("Tentando ler arquivo Excel...")
             df = pd.read_excel(arquivo_path)
+            print("Arquivo Excel lido com sucesso!")
         
+        print(f"Shape do DataFrame: {df.shape}")
         print(f"Colunas encontradas: {list(df.columns)}")
-        print(f"Primeiras linhas:\n{df.head()}")
+        print(f"DataFrame vazio?: {df.empty}")
+        
+        # Limpa os nomes das colunas removendo espaços extras
+        df.columns = df.columns.str.strip()
+        print(f"Colunas após limpeza: {list(df.columns)}")
+        
+        # Verifica se o DataFrame não está vazio
+        if df.empty:
+            print("ERRO: DataFrame está vazio!")
+            return contatos
         
         # Detecta colunas automaticamente
         codigo_col = None
         nome_col = None
         telefone_col = None
         
+        print("\n=== DETECTANDO COLUNAS ===")
+        
         # Procura por colunas de código
         for col in df.columns:
-            col_lower = str(col).lower()
+            col_lower = str(col).lower().strip()
             if any(palavra in col_lower for palavra in ['cod', 'código', 'codigo', 'code']):
                 codigo_col = col
+                print(f"✓ Coluna de código encontrada: {col}")
                 break
         
         # Procura por colunas de nome
         for col in df.columns:
-            col_lower = str(col).lower()
+            col_lower = str(col).lower().strip()
             if any(palavra in col_lower for palavra in ['nome', 'name', 'contato', 'pessoa', 'cliente']):
                 nome_col = col
+                print(f"✓ Coluna de nome encontrada: {col}")
                 break
         
         # Procura por colunas de telefone
         for col in df.columns:
-            col_lower = str(col).lower()
+            col_lower = str(col).lower().strip()
             if any(palavra in col_lower for palavra in ['telefone', 'phone', 'fone', 'celular', 'tel', 'mobile', 'numero']):
                 telefone_col = col
+                print(f"✓ Coluna de telefone encontrada: {col}")
                 break
         
         # Se não encontrou, usa as colunas por posição
         if not codigo_col and len(df.columns) > 0:
             codigo_col = df.columns[0]
+            print(f"Usando primeira coluna como código: {codigo_col}")
         if not nome_col and len(df.columns) > 1:
             nome_col = df.columns[1]
+            print(f"Usando segunda coluna como nome: {nome_col}")
         if not telefone_col and len(df.columns) > 2:
             telefone_col = df.columns[2]
+            print(f"Usando terceira coluna como telefone: {telefone_col}")
         elif not telefone_col and len(df.columns) > 1:
             telefone_col = df.columns[-1]  # Última coluna se só tiver 2 colunas
+            print(f"Usando última coluna como telefone: {telefone_col}")
         
-        print(f"Usando coluna código: {codigo_col}")
-        print(f"Usando coluna nome: {nome_col}")
-        print(f"Usando coluna telefone: {telefone_col}")
+        print(f"\n=== COLUNAS SELECIONADAS ===")
+        print(f"Coluna código: {codigo_col}")
+        print(f"Coluna nome: {nome_col}")
+        print(f"Coluna telefone: {telefone_col}")
         
         # Extrai contatos
+        print(f"\n=== PROCESSANDO LINHAS ===")
+        linhas_processadas = 0
+        linhas_validas = 0
+        
         for index, row in df.iterrows():
+            linhas_processadas += 1
+            
             codigo = str(row[codigo_col]).strip() if codigo_col and pd.notna(row[codigo_col]) else ''
             nome = str(row[nome_col]).strip() if nome_col and pd.notna(row[nome_col]) else ''
             telefone = str(row[telefone_col]).strip() if telefone_col and pd.notna(row[telefone_col]) else ''
@@ -186,17 +220,34 @@ def ler_planilha_contatos(arquivo_path):
                 telefone = ''
             if codigo.lower() == 'nan':
                 codigo = ''
+            
+            nome_higienizado = higienizar_nome(nome)
+            telefone_formatado = formatar_telefone(telefone)
+            
+            # Verifica se tem pelo menos nome ou telefone válido
+            if not nome_higienizado and not telefone_formatado:
+                continue
                 
-                contatos.append({
-                    'Codigo': codigo,
-                    'Nome': higienizar_nome(nome),  # Usa higienizar_nome em vez de formatar_nome
-                    'Telefone': formatar_telefone(telefone)
-                })
+            contatos.append({
+                'Codigo': codigo,
+                'Nome': nome_higienizado,
+                'Telefone': telefone_formatado
+            })
+            linhas_validas += 1
+        
+        print(f"\n=== RESUMO DO PROCESSAMENTO ===")
+        print(f"Linhas processadas: {linhas_processadas}")
+        print(f"Linhas válidas: {linhas_validas}")
+        print(f"Total de contatos: {len(contatos)}")
         
         return contatos
         
     except Exception as e:
-        print(f"Erro ao ler planilha: {e}")
+        print(f"=== ERRO AO LER PLANILHA ===")
+        print(f"Erro: {e}")
+        import traceback
+        print(f"Traceback completo:")
+        traceback.print_exc()
         raise Exception(f"Erro ao processar planilha: {str(e)}")
 
 def formatar_nome(nome):
@@ -391,6 +442,8 @@ def upload_file():
             # Processa baseado no tipo
             if tipo_arquivo == 'vcf':
                 # VCF para CSV/Excel
+                print("=== PROCESSANDO VCF PARA PLANILHA ===")
+                
                 contatos = extrair_contatos_manual(temp_path)
                 print(f"Contatos extraídos do VCF: {len(contatos)}")
                 
@@ -408,7 +461,6 @@ def upload_file():
                 
                 # Gera CSV e Excel separadamente
                 df = pd.DataFrame(contatos_higienizados)
-                # Renomeia as colunas conforme especificado
                 df.columns = ['COD', 'NOMES CLIENTES', 'NUMEROS TELEFONE']
                 base_name = filename.rsplit('.', 1)[0]
                 
@@ -430,15 +482,22 @@ def upload_file():
             
             elif tipo_arquivo == 'planilha':
                 # Excel/CSV para VCF
+                print(f"=== PROCESSANDO PLANILHA PARA VCF ===")
+                print(f"Arquivo original: {filename}")
+                
                 contatos = ler_planilha_contatos(temp_path)
                 print(f"Contatos extraídos da planilha: {len(contatos)}")
                 
                 if not contatos:
-                    flash('Nenhum contato foi encontrado na planilha')
+                    print("ERRO: Nenhum contato foi encontrado na planilha")
+                    flash('Nenhum contato foi encontrado na planilha. Verifique se o arquivo possui dados válidos nas colunas corretas.')
                     return redirect(url_for('upload_file'))
                 
                 # Gera VCF
+                print("Gerando conteúdo VCF...")
                 vcf_content = gerar_vcf_contatos(contatos)
+                print(f"VCF gerado com {len(vcf_content)} caracteres")
+                
                 base_name = filename.rsplit('.', 1)[0]
                 vcf_filename = f'{base_name}_contatos.vcf'
                 vcf_path = os.path.join(UPLOAD_FOLDER, vcf_filename)
@@ -446,6 +505,8 @@ def upload_file():
                 # Salva arquivo VCF
                 with open(vcf_path, 'w', encoding='utf-8') as f:
                     f.write(vcf_content)
+                
+                print(f"Arquivo VCF salvo: {vcf_filename}")
                 
                 return render_template('resultado.html', 
                                      num_contatos=len(contatos),
