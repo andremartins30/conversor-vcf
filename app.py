@@ -22,7 +22,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def detectar_tipo_arquivo(filename):
     """Detecta o tipo do arquivo baseado na extensão"""
@@ -33,17 +33,44 @@ def detectar_tipo_arquivo(filename):
         return 'planilha'
     return 'desconhecido'
 
-def gerar_vcf_contatos(contatos):
-    """Gera conteúdo VCF a partir de lista de contatos"""
+def gerar_vcf_contatos(df_contatos):
+    """Gera conteúdo VCF a partir de DataFrame de contatos"""
     vcf_content = []
+    contatos_processados = 0
     
-    for contato in contatos:
-        codigo = contato.get('Codigo', '').strip()
-        nome = contato.get('Nome', '').strip()
-        telefone = contato.get('Telefone', '').strip()
+    app.logger.info(f"Iniciando geração de VCF para {len(df_contatos)} contatos")
+    
+    for index, row in df_contatos.iterrows():
+        # Tenta diferentes nomes de colunas para flexibilidade
+        codigo = ''
+        nome = ''
+        telefone = ''
         
+        # Busca coluna de código
+        for col in ['COD', 'Codigo', 'CODIGO', 'cod', 'codigo']:
+            if col in row and str(row[col]).strip() not in ['', 'nan', 'None']:
+                codigo = str(row[col]).strip()
+                break
+                
+        # Busca coluna de nome
+        for col in ['NOMES CLIENTES', 'Nome', 'NOME', 'nome', 'NOMES', 'nomes']:
+            if col in row and str(row[col]).strip() not in ['', 'nan', 'None']:
+                nome = str(row[col]).strip()
+                break
+                
+        # Busca coluna de telefone
+        for col in ['NUMEROS TELEFONES', 'Telefone', 'TELEFONE', 'telefone', 'NUMEROS', 'numeros']:
+            if col in row and str(row[col]).strip() not in ['', 'nan', 'None']:
+                telefone = str(row[col]).strip()
+                break
+        
+        # Pula se não tiver nome nem telefone
         if not nome and not telefone:
             continue
+        
+        # Higieniza o nome removendo números
+        if nome:
+            nome = higienizar_nome(nome)
         
         # Monta o nome completo incluindo o código se disponível
         nome_completo = nome
@@ -103,152 +130,173 @@ def gerar_vcf_contatos(contatos):
         
         vcf_content.append("END:VCARD")
         vcf_content.append("")  # Linha em branco entre contatos
+        
+        contatos_processados += 1
     
+    app.logger.info(f"VCF gerado com sucesso: {contatos_processados} contatos processados")
     return '\n'.join(vcf_content)
 
-def ler_planilha_contatos(arquivo_path):
-    """Lê contatos de arquivo Excel/CSV"""
-    contatos = []
+def limpar_csv_malformado(caminho_arquivo):
+    """Pre-processa CSV malformado para corrigir linhas quebradas"""
+    app.logger.info("Executando pré-processamento do CSV")
+    
+    # Lista de encodings para tentar
+    encodings = ['latin-1', 'cp1252', 'utf-8', 'iso-8859-1']
+    
+    for encoding in encodings:
+        try:
+            with open(caminho_arquivo, 'r', encoding=encoding) as f:
+                linhas = f.readlines()
+                
+            linhas_limpas = []
+            linha_temp = ""
+            
+            for linha in linhas:
+                linha = linha.strip()
+                
+                # Se a linha começa com número (COD), é uma nova linha
+                if linha and linha[0].isdigit() and ';' in linha:
+                    # Se há uma linha temporária, adiciona ela primeiro
+                    if linha_temp:
+                        linhas_limpas.append(linha_temp)
+                    linha_temp = linha
+                else:
+                    # Se é continuação da linha anterior, anexa
+                    if linha_temp and linha:
+                        linha_temp += linha
+                        
+            # Adiciona a última linha se existir
+            if linha_temp:
+                linhas_limpas.append(linha_temp)
+            
+            # Cria arquivo temporário com linhas corrigidas
+            import tempfile
+            fd, temp_path = tempfile.mkstemp(suffix='.csv', text=True)
+            
+            with open(temp_path, 'w', encoding='utf-8', newline='') as f:
+                for linha in linhas_limpas:
+                    f.write(linha + '\n')
+                    
+            app.logger.info(f"CSV limpo criado: {len(linhas_limpas)} linhas processadas")
+            return temp_path
+            
+        except Exception as e:
+            app.logger.debug(f"Erro na limpeza com encoding {encoding}: {e}")
+            continue
+            
+    raise ValueError("Não foi possível limpar o arquivo CSV")
+
+def ler_planilha_contatos(caminho_arquivo):
+    """Lê planilha de contatos (Excel ou CSV) com tratamento robusto de erros"""
+    app.logger.info(f"Iniciando leitura do arquivo: {caminho_arquivo}")
     
     try:
-        print(f"=== INICIANDO LEITURA DA PLANILHA ===")
-        print(f"Arquivo: {arquivo_path}")
+        # Se for arquivo Excel
+        if caminho_arquivo.endswith(('.xlsx', '.xls')):
+            app.logger.info("Arquivo identificado como Excel")
+            try:
+                df = pd.read_excel(caminho_arquivo)
+                app.logger.info(f"Excel lido com sucesso: {len(df)} linhas")
+                return df
+            except Exception as e:
+                app.logger.error(f"Erro ao ler Excel: {e}")
+                raise ValueError(f"Erro ao ler arquivo Excel: {e}")
         
-        # Detecta extensão
-        ext = arquivo_path.rsplit('.', 1)[1].lower()
-        print(f"Extensão detectada: {ext}")
-        
-        if ext == 'csv':
-            # Tenta diferentes encodings para CSV
-            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+        # Se for arquivo CSV
+        elif caminho_arquivo.endswith('.csv'):
+            app.logger.info("Arquivo identificado como CSV")
+            
+            # Primeiro tenta limpar o CSV se estiver malformado
+            try:
+                caminho_limpo = limpar_csv_malformado(caminho_arquivo)
+                app.logger.info("CSV pré-processado com sucesso")
+                caminho_para_ler = caminho_limpo
+            except Exception as e:
+                app.logger.warning(f"Pré-processamento falhou: {e}. Tentando ler arquivo original.")
+                caminho_para_ler = caminho_arquivo
+            
+            # Lista de encodings para tentar
+            encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+            # Lista de separadores comuns
+            separadores = [';', ',', '	']
+            
+            # Primeiro, tenta detectar o separador correto
+            for encoding in encodings:
+                for sep in separadores:
+                    try:
+                        app.logger.info(f"Tentando CSV com encoding {encoding} e separador '{sep}'")
+                        
+                        # Lê uma amostra pequena primeiro para verificar
+                        df_sample = pd.read_csv(
+                            caminho_para_ler,
+                            encoding=encoding,
+                            sep=sep,
+                            nrows=5,
+                            on_bad_lines='skip',
+                            engine='python',
+                            skipinitialspace=True,  # Remove espaços após separador
+                            header=None  # Não usa primeira linha como cabeçalho
+                        )
+                        
+                        # Verifica se tem pelo menos 3 colunas
+                        if len(df_sample.columns) >= 3:
+                            app.logger.info(f"Separador detectado: '{sep}' com encoding {encoding}")
+                            
+                            # Agora lê o arquivo completo
+                            df = pd.read_csv(
+                                caminho_para_ler,
+                                encoding=encoding,
+                                sep=sep,
+                                on_bad_lines='skip',
+                                engine='python',
+                                skipinitialspace=True,
+                                dtype=str,  # Força tudo como string para evitar problemas
+                                keep_default_na=False,  # Evita converter valores para NaN
+                                header=None  # Não usa primeira linha como cabeçalho
+                            )
+                            
+                            # Define nomes de colunas padrão
+                            if len(df.columns) >= 3:
+                                df.columns = ['COD', 'NOMES CLIENTES', 'NUMEROS TELEFONES'] + [f'EXTRA_{i}' for i in range(len(df.columns) - 3)]
+                            
+                            # Remove linhas vazias
+                            df = df.dropna(how='all')
+                            
+                            if not df.empty:
+                                app.logger.info(f"CSV lido com sucesso: {len(df)} linhas, {len(df.columns)} colunas")
+                                app.logger.info(f"Colunas encontradas: {list(df.columns)}")
+                                
+                                # Remove arquivo temporário se foi criado
+                                if caminho_para_ler != caminho_arquivo:
+                                    try:
+                                        import os
+                                        os.unlink(caminho_para_ler)
+                                    except:
+                                        pass
+                                        
+                                return df
+                                
+                    except Exception as e:
+                        app.logger.debug(f"Falha com {encoding} + '{sep}': {e}")
+                        continue
+            
+            # Remove arquivo temporário se foi criado
+            if caminho_para_ler != caminho_arquivo:
                 try:
-                    df = pd.read_csv(arquivo_path, encoding=encoding)
-                    print(f"CSV lido com encoding: {encoding}")
-                    break
-                except UnicodeDecodeError:
-                    print(f"Falha com encoding: {encoding}")
-                    continue
-            else:
-                raise Exception("Não foi possível detectar a codificação do arquivo CSV")
+                    import os
+                    os.unlink(caminho_para_ler)
+                except:
+                    pass
+                    
+            # Se chegou aqui, nenhuma combinação funcionou
+            raise ValueError("Não foi possível ler o arquivo CSV. Verifique se o formato está correto (COD, NOMES CLIENTES, NUMEROS TELEFONES)")
+        
         else:
-            # Excel
-            print("Tentando ler arquivo Excel...")
-            df = pd.read_excel(arquivo_path)
-            print("Arquivo Excel lido com sucesso!")
-        
-        print(f"Shape do DataFrame: {df.shape}")
-        print(f"Colunas encontradas: {list(df.columns)}")
-        print(f"DataFrame vazio?: {df.empty}")
-        
-        # Limpa os nomes das colunas removendo espaços extras
-        df.columns = df.columns.str.strip()
-        print(f"Colunas após limpeza: {list(df.columns)}")
-        
-        # Verifica se o DataFrame não está vazio
-        if df.empty:
-            print("ERRO: DataFrame está vazio!")
-            return contatos
-        
-        # Detecta colunas automaticamente
-        codigo_col = None
-        nome_col = None
-        telefone_col = None
-        
-        print("\n=== DETECTANDO COLUNAS ===")
-        
-        # Procura por colunas de código
-        for col in df.columns:
-            col_lower = str(col).lower().strip()
-            if any(palavra in col_lower for palavra in ['cod', 'código', 'codigo', 'code']):
-                codigo_col = col
-                print(f"✓ Coluna de código encontrada: {col}")
-                break
-        
-        # Procura por colunas de nome
-        for col in df.columns:
-            col_lower = str(col).lower().strip()
-            if any(palavra in col_lower for palavra in ['nome', 'name', 'contato', 'pessoa', 'cliente']):
-                nome_col = col
-                print(f"✓ Coluna de nome encontrada: {col}")
-                break
-        
-        # Procura por colunas de telefone
-        for col in df.columns:
-            col_lower = str(col).lower().strip()
-            if any(palavra in col_lower for palavra in ['telefone', 'phone', 'fone', 'celular', 'tel', 'mobile', 'numero']):
-                telefone_col = col
-                print(f"✓ Coluna de telefone encontrada: {col}")
-                break
-        
-        # Se não encontrou, usa as colunas por posição
-        if not codigo_col and len(df.columns) > 0:
-            codigo_col = df.columns[0]
-            print(f"Usando primeira coluna como código: {codigo_col}")
-        if not nome_col and len(df.columns) > 1:
-            nome_col = df.columns[1]
-            print(f"Usando segunda coluna como nome: {nome_col}")
-        if not telefone_col and len(df.columns) > 2:
-            telefone_col = df.columns[2]
-            print(f"Usando terceira coluna como telefone: {telefone_col}")
-        elif not telefone_col and len(df.columns) > 1:
-            telefone_col = df.columns[-1]  # Última coluna se só tiver 2 colunas
-            print(f"Usando última coluna como telefone: {telefone_col}")
-        
-        print(f"\n=== COLUNAS SELECIONADAS ===")
-        print(f"Coluna código: {codigo_col}")
-        print(f"Coluna nome: {nome_col}")
-        print(f"Coluna telefone: {telefone_col}")
-        
-        # Extrai contatos
-        print(f"\n=== PROCESSANDO LINHAS ===")
-        linhas_processadas = 0
-        linhas_validas = 0
-        
-        for index, row in df.iterrows():
-            linhas_processadas += 1
+            raise ValueError("Formato de arquivo não suportado. Use .xlsx, .xls ou .csv")
             
-            codigo = str(row[codigo_col]).strip() if codigo_col and pd.notna(row[codigo_col]) else ''
-            nome = str(row[nome_col]).strip() if nome_col and pd.notna(row[nome_col]) else ''
-            telefone = str(row[telefone_col]).strip() if telefone_col and pd.notna(row[telefone_col]) else ''
-            
-            # Ignora linhas vazias ou com 'nan'
-            if nome.lower() in ['nan', ''] and telefone.lower() in ['nan', '']:
-                continue
-            if nome.lower() == 'nan':
-                nome = ''
-            if telefone.lower() == 'nan':
-                telefone = ''
-            if codigo.lower() == 'nan':
-                codigo = ''
-            
-            nome_higienizado = higienizar_nome(nome)
-            telefone_formatado = formatar_telefone(telefone)
-            
-            # Verifica se tem pelo menos nome ou telefone válido
-            if not nome_higienizado and not telefone_formatado:
-                continue
-                
-            contatos.append({
-                'Codigo': codigo,
-                'Nome': nome_higienizado,
-                'Telefone': telefone_formatado
-            })
-            linhas_validas += 1
-        
-        print(f"\n=== RESUMO DO PROCESSAMENTO ===")
-        print(f"Linhas processadas: {linhas_processadas}")
-        print(f"Linhas válidas: {linhas_validas}")
-        print(f"Total de contatos: {len(contatos)}")
-        
-        return contatos
-        
     except Exception as e:
-        print(f"=== ERRO AO LER PLANILHA ===")
-        print(f"Erro: {e}")
-        import traceback
-        print(f"Traceback completo:")
-        traceback.print_exc()
-        raise Exception(f"Erro ao processar planilha: {str(e)}")
+        app.logger.error(f"Erro geral na leitura do arquivo: {e}")
+        raise
 
 def formatar_nome(nome):
     """Formata o nome para caixa alta"""
@@ -475,10 +523,10 @@ def upload_file():
                 df.to_excel(excel_path, index=False)
                 
                 return render_template('resultado.html', 
-                                     num_contatos=len(contatos),
-                                     csv_file=csv_filename,
-                                     xlsx_file=excel_filename,
-                                     tipo_conversao='vcf_para_planilha')
+                                    num_contatos=len(contatos),
+                                    csv_file=csv_filename,
+                                    xlsx_file=excel_filename,
+                                    tipo_conversao='vcf_para_planilha')
             
             elif tipo_arquivo == 'planilha':
                 # Excel/CSV para VCF
@@ -488,7 +536,7 @@ def upload_file():
                 contatos = ler_planilha_contatos(temp_path)
                 print(f"Contatos extraídos da planilha: {len(contatos)}")
                 
-                if not contatos:
+                if contatos.empty:
                     print("ERRO: Nenhum contato foi encontrado na planilha")
                     flash('Nenhum contato foi encontrado na planilha. Verifique se o arquivo possui dados válidos nas colunas corretas.')
                     return redirect(url_for('upload_file'))
@@ -509,9 +557,9 @@ def upload_file():
                 print(f"Arquivo VCF salvo: {vcf_filename}")
                 
                 return render_template('resultado.html', 
-                                     num_contatos=len(contatos),
-                                     vcf_file=vcf_filename,
-                                     tipo_conversao='planilha_para_vcf')
+                                    num_contatos=len(contatos),
+                                    vcf_file=vcf_filename,
+                                    tipo_conversao='planilha_para_vcf')
             
             else:
                 flash('Tipo de arquivo não suportado')
